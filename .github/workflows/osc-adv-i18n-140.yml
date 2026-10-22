@@ -29,7 +29,7 @@ jobs:
 
       - name: Locale resource check
         run: |
-          python3 - <<'PY'
+          python3 - common/src/main/resources/assets/enderitemod/lang <<'PY'
           #!/usr/bin/env python3
           import json
           import re
