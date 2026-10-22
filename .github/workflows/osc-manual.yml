@@ -1,0 +1,43 @@
+name: OSC manual checks
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: 'Branch, tag or SHA to build and test'
+        required: true
+        type: string
+
+jobs:
+  checks:
+    name: Build and GameTest ${{ inputs.target_ref }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout target ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+          fetch-depth: 0
+
+      - name: Print provenance
+        run: |
+          echo "provenance <<EOF"
+          echo "target_ref=${{ inputs.target_ref }}"
+          echo "head_sha=$(git rev-parse HEAD)"
+          echo "EOF"
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: 25
+          distribution: temurin
+
+      - name: Make Gradle Wrapper Executable
+        run: chmod +x ./gradlew
+
+      - name: Build fabric and neoforge
+        run: ./gradlew :fabric:build :neoforge:build
+
+      - name: GameTest fabric and neoforge
+        run: ./gradlew :fabric:runGameTest :neoforge:runGameTest
