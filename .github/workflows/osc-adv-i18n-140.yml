@@ -1,0 +1,136 @@
+name: OSC adv i18n 140
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: 'Branch, tag or SHA to check'
+        required: true
+        type: string
+
+jobs:
+  locale-check:
+    name: Locale check ${{ inputs.target_ref }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout target ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+          fetch-depth: 0
+
+      - name: Print provenance
+        run: |
+          echo "provenance <<EOF"
+          echo "target_ref=${{ inputs.target_ref }}"
+          echo "head_sha=$(git rev-parse HEAD)"
+          echo "EOF"
+
+      - name: Locale resource check
+        run: |
+          python3 - <<'PY'
+          #!/usr/bin/env python3
+          import json
+          import re
+          import sys
+          from collections import Counter
+          from pathlib import Path
+
+
+          PLACEHOLDER = re.compile(
+              r"%%|%(?:[1-9]\d*\$)?[-#+ 0,(<]*(?:\d+|\*)?"
+              r"(?:\.(?:\d+|\*))?(?:[tT][A-Za-z]|[bBhHsScCdioxXeEfgGaAuUn])"
+          )
+          ZH_KEYS = (
+              "item.enderitemod.enderite_spear",
+              "item.enderitemod.enderite_horse_armor",
+              "item.enderitemod.enderite_nautilus_armor",
+          )
+
+
+          def parse(path):
+              def object_pairs(pairs):
+                  counts = Counter(key for key, value in pairs)
+                  for key, count in counts.items():
+                      assert count == 1, f"{path.name}: key {key!r}: duplicate JSON key ({count} occurrences)"
+                  return dict(pairs)
+
+              def invalid_constant(value):
+                  raise AssertionError(f"{path.name}: key <document>: invalid JSON constant {value!r}")
+
+              try:
+                  value = json.loads(
+                      path.read_text(encoding="utf-8"),
+                      object_pairs_hook=object_pairs,
+                      parse_constant=invalid_constant,
+                  )
+              except (OSError, UnicodeError, json.JSONDecodeError) as error:
+                  raise AssertionError(f"{path.name}: key <document>: invalid JSON: {error}") from None
+              assert isinstance(value, dict), f"{path.name}: key <document>: expected a JSON object"
+              return value
+
+
+          def placeholders(value):
+              return sorted(token for token in PLACEHOLDER.findall(value) if token != "%%")
+
+
+          def main():
+              assert len(sys.argv) == 2, "<arguments>: key lang_dir: expected exactly one lang directory"
+              lang = Path(sys.argv[1])
+              assert lang.is_dir(), f"{lang}: key <directory>: lang directory missing"
+              locales = {path.name: parse(path) for path in sorted(lang.glob("*.json"))}
+              print(f"PASS strict JSON parsing: {len(locales)} files parsed", flush=True)
+
+              failures = []
+              for name in ("en_us.json", "tr_tr.json", "zh_cn.json"):
+                  if name not in locales:
+                      failures.append(f"{name}: key <file>: required locale file missing")
+
+              if "en_us.json" in locales and "tr_tr.json" in locales:
+                  en, tr = locales["en_us.json"], locales["tr_tr.json"]
+                  unknown = [key for key in tr if key not in en]
+                  for key in unknown:
+                      failures.append(f"tr_tr.json: key {key!r}: absent from en_us.json")
+                  if not unknown:
+                      print(f"PASS Turkish key coverage: {len(tr)} tr keys checked", flush=True)
+
+                  compared = 0
+                  mismatches = 0
+                  for key in tr.keys() & en.keys():
+                      assert isinstance(en[key], str), f"en_us.json: key {key!r}: expected string value"
+                      assert isinstance(tr[key], str), f"tr_tr.json: key {key!r}: expected string value"
+                      expected, actual = placeholders(en[key]), placeholders(tr[key])
+                      compared += 1
+                      if actual != expected:
+                          mismatches += 1
+                          failures.append(
+                              f"tr_tr.json: key {key!r}: placeholders mismatched: "
+                              f"expected {expected!r} from en_us.json, got {actual!r}"
+                          )
+                  if not mismatches:
+                      print(f"PASS placeholder multisets: {compared} shared-key values compared", flush=True)
+
+              if "zh_cn.json" in locales:
+                  missing = [key for key in ZH_KEYS if key not in locales["zh_cn.json"]]
+                  for key in missing:
+                      failures.append(f"zh_cn.json: key {key!r}: required item key missing")
+                  if not missing:
+                      print(f"PASS Chinese item presence: {len(ZH_KEYS)} zh keys found", flush=True)
+
+              assert not failures, "\n".join(failures)
+
+
+          if __name__ == "__main__":
+              main()
+          PY
+
+      - name: zh_cn additions-only vs upstream base
+        run: |
+          git remote add upstream https://github.com/Nic4Las/Minecraft-Enderite-Mod.git
+          git fetch --quiet upstream master
+          echo "numstat for zh_cn.json vs merge-base:"
+          git diff --numstat upstream/master...HEAD -- common/src/main/resources/assets/enderitemod/lang/zh_cn.json
+          deleted=$(git diff --numstat upstream/master...HEAD -- common/src/main/resources/assets/enderitemod/lang/zh_cn.json | awk '{print $2}')
+          echo "deletions=${deleted}"
+          test "$deleted" = "0"
