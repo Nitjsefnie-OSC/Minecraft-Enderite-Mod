@@ -41,3 +41,13 @@ jobs:
 
       - name: GameTest fabric and neoforge
         run: ./gradlew :fabric:runGameTest :neoforge:runGameTest
+
+      - name: Upload GameTest reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gametest-reports-${{ inputs.target_ref }}
+          path: |
+            fabric/build/reports/gametest/results.xml
+            neoforge/build/reports/gametest/results.xml
+          if-no-files-found: warn
